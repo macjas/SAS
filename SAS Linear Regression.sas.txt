@@ -1,0 +1,400 @@
+************************************************************************************************
+								  FINAL CASE STUDY - HORSE RACING
+************************************************************************************************
+************************************************************************************************;
+
+***********************************************************************************************
+									      DATA PREPARATION 
+***********************************************************************************************;
+LIBNAME Project "D:\Users\user445\My Assignments\Final Case Study";
+DATA track;SET Project.track;RUN;
+DATA track_statistic;SET Project.track_statistic;RUN;
+DATA track_zone;SET Project.track_zone;RUN;
+PROC MEANS NMISS DATA=Project.race;RUN;
+PROC SORT DATA=Project.exotic_payoff NODUPRECS; BY track_id race_date race_number day_evening; RUN; 
+PROC SORT DATA=Project.Race NODUPRECS; BY track_id race_date race_number day_evening; RUN; 
+
+*********************************************************************************************
+**Deleting unneeded Track ID's and other variables**
+**We will also delete CreateDT,ModifyDT,RecType,graded_stake_id & temporary_rail_distance 
+**variables since they have significant
+**proportions of missing values and are not very useful.
+*********************************************************************************************;
+DATA exotic_payoff;SET Project.exotic_payoff (DROP=CreateDT ModifyDT RecType);IF track_id="AP" OR track_id="CRC" OR track_id="FG";RUN;
+DATA race;SET Project.race (DROP=CreateDT ModifyDT RecType Graded_Stake_id temporary_rail_distance);IF track_id="AP" OR track_id="CRC" OR track_id="FG";RUN;
+PROC FREQ Data=exotic_payoff; TABLE track_id;RUN;
+
+*********************************************************************************************
+**INITIAL DATA EXPLORATION**
+**Note, there are multiple exotic payoff records for every race.
+**We will need to check the merge carefully.
+*********************************************************************************************;
+PROC CONTENTS DATA=race;RUN;
+PROC CONTENTS DATA=exotic_payoff;RUN;
+PROC SORT DATA=exotic_payoff; BY track_id race_date race_number day_evening; RUN;
+PROC SORT DATA=race;BY track_id race_date race_number day_evening; RUN;
+PROC SORT DATA=track;BY track_id;RUN;
+PROC SORT DATA=track_statistic;BY track_id race_date day_evening;RUN;
+PROC SORT DATA=track_zone;BY track_id;RUN;
+
+*********************************************************************************************
+**DOING A 1-MANY MERGE OF OUR DATASETS**
+**The new dataset is successfully complied with 36,318 records and 62 variables.
+**No duplicate records but quite a few missing records were found.
+**Note that all three tracks are in the US states of FL,IL & LA and hence, the track id's 
+**are a perfect proxy for state/geographical area;
+**Redundant or missing variables**
+Country, Conditions_of_Race Official_Indicator Status Stakes_Indicator About_Distance_Indicator scheduled_surface 
+reverts_money available_money paid_to_others guaranteed_indicator added_money_foreign added_money_usa wager_types 
+wager_types_cancelled post_time division start_description grade race_class_stake_rule race_class_blktype_rule
+abbreviated_name program_selections race_class_stk_rule_wo_classic race_class_bt_rule_wo_classic chute_start
+number_of_rights winning_numbers carryover 
+*********************************************************************************************;
+DATA HorseRace;MERGE Race (IN=a) Exotic_Payoff (IN=b);BY track_id race_date race_number day_evening;IF a OR b;RUN;
+PROC SORT DATA=HorseRace NODUPRECS; BY Purse_Foreign; RUN; *track_id race_date race_number day_evening;
+PROC FREQ DATA=HorseRace;RUN;
+PROC CONTENTS DATA=HorseRace;RUN;
+*********************************************************************************************
+**Dropping Redundant/missing/useless variables**
+Country Conditions_of_Race Official_Indicator race_date_precision Status Stakes_Indicator About_Distance_Indicator 
+scheduled_surface reverts_money available_money paid_to_others guaranteed_indicator added_money_foreign added_money_usa 
+wager_types wager_types_cancelled post_time division start_description grade race_class_stake_rule race_class_blktype_rule
+abbreviated_name program_selections race_class_stk_rule_wo_classic race_class_bt_rule_wo_classic chute_start
+number_of_rights winning_numbers carryover course_type 
+*********************************************************************************************;
+DATA HorseRace;
+SET Horserace 
+(DROP=Country Conditions_of_Race Official_Indicator race_date_precision Status Stakes_Indicator About_Distance_Indicator 
+scheduled_surface reverts_money available_money paid_to_others guaranteed_indicator added_money_foreign added_money_usa 
+wager_types wager_types_cancelled post_time division start_description grade race_class_stake_rule race_class_blktype_rule
+abbreviated_name program_selections race_class_stk_rule_wo_classic race_class_bt_rule_wo_classic chute_start
+number_of_rights winning_numbers carryover course_type);
+RUN;
+
+*********************************************************************************************
+**Limiting dataset to 2005-2006, creating Year,Month.
+Also creating a dummy variable for Holiday/No Holiday
+*********************************************************************************************;
+PROC SORT DATA=HorseRace;BY Race_Date;RUN;
+DATA HorseRace1;
+SET Horserace;
+race_date=datepart(race_date);
+FORMAT race_date DATE9.;
+Year=Year(race_date); Month=Month(race_date);
+IF Year<2005 OR Year>2006 THEN DELETE;
+IF race_date='06FEB2005'D OR race_date='06FEB2006'D OR /*Super Bowl*/
+   race_date='17MAR2005'D OR race_date='17MAR2006'D OR /*St. Paddy's Day */
+   race_date='27MAR2005'D OR race_date='16APR2006'D OR /*Easter */
+   race_date='05MAY2005'D OR race_date='05MAY2006'D OR /*Cinco de Mayo */
+   race_date='30MAY2005'D OR race_date='29MAY2006'D OR /*Memorial Day */
+   race_date='04JUL2005'D OR race_date='04JUL2006'D OR /*Independence Day */
+   race_date='05SEP2005'D OR race_date='04SEP2006'D OR /*Labor Day */
+   race_date='11NOV2005'D OR race_date='11NOV2006'D OR /*Veterans Day */
+   race_date='24NOV2005'D OR race_date='23NOV2006'D OR /*Thanksgiving */
+   race_date='25DEC2005'D OR race_date='25DEC2006'D OR /*Christmas */
+   race_date='01JAN2005'D OR race_date='01JAN2006'D OR /*New Years Day */
+   race_date='25MAR2005'D OR race_date='14APR2006'D OR /*Good Friday */
+   race_date='26DEC2005'D OR race_date='26DEC2006'D    /*Boxing Day */
+   THEN Holiday=1; ELSE Holiday=0;
+RUN; 
+PROC SORT DATA=HorseRace1; BY Descending Holiday;RUN; *Dummy variable created without issues;
+
+*********************************************************************************************
+**Preping the distance_id,purses and claim amount variables.
+**These are our money related independent variables. 
+*********************************************************************************************;
+PROC FREQ DATA=HorseRace1; TABLES distance_id purse_foreign purse_USA Minimum_Claim_Price Maximum_Claim_Price;RUN;
+PROC UNIVARIATE DATA=HorseRace1; VAR distance_id purse_foreign purse_USA Minimum_Claim_Price Maximum_Claim_Price; RUN;
+PROC SORT DATA=HorseRace1; BY Descending distance_unit; RUN;
+DATA HorseRace2;
+SET HorseRace1;
+IF distance_unit='Y' THEN distance_id=200; *converting (an approximation) all the yards distances to furlongs;
+RUN;
+PROC SORT DATA=HorseRace2; BY Descending distance_unit; RUN;
+*********************************************************************************************
+									**MISSING RECORDS**
+**Variables:track_condition weather number_of_runners number_of_tickets_bet total_pool
+1. Both track_condition and weather have 320 missing values. (Possible correlation?)
+2. In 330 instances, number_of_runners is zero!
+3. In 325 instances number_of_tickets_bet is zero!
+4. In 761 instances total_pool is zero!
+For the same 320 races in Florida & Louisiana, track_condition, weather, number of runners total_pool, wps_pool
+and many other variables are missing data.
+Since these records only represent 2% of the dataset and contain no important outliers, we can delete them. 
+However, management needs to investigate why these values are missing and whether the high foreign purse amounts 
+are a mistake or not. (Missing records from May-Dec 2006).
+Similarly, there are races numbered 66. Also the Race_Type is given by CAN, which is not a valid code.
+These are probably typos. 
+*********************************************************************************************;
+PROC SORT DATA=HorseRace1;BY track_id race_date race_number day_evening;RUN;
+PROC FREQ DATA=HorseRace1; TABLES track_condition weather number_of_runners number_of_tickets_bet total_pool;RUN;
+*track_condition and weather;
+PROC SORT DATA=HorseRace1; BY weather;RUN;PROC MEANS DATA=HorseRace1; BY weather;RUN;
+PROC FREQ DATA=HorseRace1;BY weather;RUN;
+*number_of_runners;
+PROC SORT DATA=HorseRace1; BY number_of_runners;RUN;PROC MEANS DATA=HorseRace1; BY number_of_runners;RUN;
+PROC FREQ DATA=HorseRace1;RUN;
+********************************************************************************************
+**DELETING THE 320 RECORDS RECORDS**
+********************************************************************************************;
+DATA HorseRace2;
+SET HorseRace1;
+IF weather="" THEN DELETE;
+RUN;
+********************************************************************************************
+**IMPUTING VALUES FOR total_pool and wps_pool and CREATING handle variable**
+**total_pool is the sum of money collected on bets based on wagers. Hence we will derive it
+**by taking the mean of total pool by wager types for the 441 missing records.
+**Note, wager_types M and Z have all 0 values in total_pool and we will use the population mean for those. 
+**Looks like our population means didn't change much, which is good
+**We have 10 missing values for wps_pool,which we will impute using the population mean of
+**wps_pool BY maximum_claim_price=12500(we cannot use CAN race_types because its an invalid code)
+********************************************************************************************;
+PROC FREQ DATA=HorseRace2;RUN;
+PROC SORT DATA=HorseRace2; BY total_pool wager_type ;RUN;
+PROC SORT DATA=HorseRace2;BY wager_type;RUN;PROC MEANS DATA=HorseRace2; BY wager_type;RUN;
+DATA HorseRace2;
+SET HorseRace2;
+IF total_pool=0 AND wager_type="3" THEN total_pool=13888;
+IF total_pool=0 AND wager_type="4" THEN total_pool=27054;
+IF total_pool=0 AND wager_type='6' THEN total_pool=4924;
+IF total_pool=0 AND wager_type='9' THEN total_pool=4015; 
+IF total_pool=0 AND wager_type='D' THEN total_pool=32669;
+IF total_pool=0 AND wager_type='E' THEN total_pool=99567; 
+IF total_pool=0 AND wager_type='M' THEN total_pool=55926;
+IF total_pool=0 AND wager_type='S' THEN total_pool=32783; 
+IF total_pool=0 AND wager_type='T' THEN total_pool=81324;
+IF total_pool=0 AND wager_type='Z' THEN total_pool=55926;
+IF sex_restriction='' THEN sex_restriction="U"; /*Creating an unknown category*/
+IF number_of_runners=0 THEN number_of_runners=7; /*Dealing with 0 runners in a race.Based on population mode*/
+IF wps_pool=0 THEN wps_pool=85292;
+RUN;
+*Basic checks;
+PROC SORT DATA=HorseRace2;BY sex_restriction;RUN; PROC MEANS DATA=HorseRace2;BY sex_restriction;RUN;
+PROC FREQ DATA=HorseRace2;RUN;
+PROC CONTENTS DATA=HorseRace2;RUN;
+*********************************************************************************************
+*Saved as a permanent dataset
+*********************************************************************************************;
+LIBNAME Project "D:\Users\user445\My Assignments\Final Case Study";
+DATA HorseRace2;
+SET Project.HorseRace2;
+RUN;
+********************************************************************************************
+**CREATING HANDLE VARIABLE**
+********************************************************************************************;
+LIBNAME Project "D:\Users\user445\My Assignments\Final Case Study";
+DATA HorseRace3;SET Project.HorseRace2;RUN;
+PROC SORT DATA=HorseRace3;BY track_id race_date race_number;RUN;
+*Creating a unique key;
+DATA HorseRace3;
+SET HorseRace3;
+Key=CATS(of track_id race_date race_number);
+RUN;
+*Calculating cumulative values of total_pool by Key;
+PROC SORT DATA=HorseRace3;BY Key;RUN;
+DATA HorseRace3;
+SET HorseRace3;
+BY Key;
+RETAIN Cum_Total_Pool 0;
+IF first.Key=1 THEN Cum_Total_Pool=Total_Pool; ELSE Cum_Total_Pool=SUM(Total_Pool,Cum_Total_Pool);
+RUN;
+*Creating the handle variable;
+DATA HorseRace4;
+SET HorseRace3;
+BY Key;
+IF last.Key=1 THEN Handle=Cum_Total_Pool+WPS_Pool;
+IF last.key=1 THEN OUTPUT HorseRace4;
+RUN;
+PROC CONTENTS DATA=HorseRace4;RUN;
+PROC SORT DATA=HorseRace4; BY Handle; RUN;
+PROC FREQ DATA=HorseRace4;TABLES track_condition*weather/Chisq;RUN;
+PROC CORR DATA=HorseRace4; VAR fraction_1 fraction_2 fraction_3 fraction_4 handle;RUN;
+PROC MEANS DATA=HorseRace4;RUN;
+
+********************************************************************************************
+**CREATING BUCKET VARIABLE** 
+**distance_id Purse_USA Minimum_Claim_Price Maximum_Claim_Price 
+**Payoff_Amount
+********************************************************************************************;
+PROC UNIVARIATE DATA=HorseRace4;
+VAR distance_id purse_USA maximum_claim_price
+	minimum_claim_price payoff_amount Number_of_Runners;RUN;
+DATA HorseRace5;
+SET HorseRace4;
+IF distance_id<=600 THEN bkt_distance=1;
+IF distance_id>600 AND distance_ID<=700 THEN bkt_distance=2;
+IF distance_id>700 AND distance_id<=800 THEN bkt_distance=3;
+IF distance_id>800 THEN bkt_distance=4;
+IF purse_usa<=12000 THEN bkt_purseUSA=1;
+IF purse_USA>12000 AND purse_USA<=28000 THEN bkt_purseUSA=2;
+IF purse_USA>20000 AND purse_USA<=28000 THEN bkt_purseUSA=3;
+IF purse_USA>28000 THEN bkt_purseUSA=4;
+IF minimum_claim_price<=13787 THEN bkt_minclaimprice=1;ELSE bkt_minclaimprice=2;
+IF maximum_claim_price<=14600 THEN bkt_maxclaimprice=1;ELSE bkt_maxclaimprice=2;
+IF payoff_amount<=73 THEN bkt_payoff=1;
+IF payoff_amount>73 AND payoff_amount<=165 THEN bkt_payoff=2;
+IF payoff_amount>165 AND payoff_amount<=410 THEN bkt_payoff=3;
+IF payoff_amount>410 THEN bkt_payoff=4;
+RUN;
+PROC CORR DATA=HorseRace5; VAR handle distance_id bkt_distance purse_USA bkt_purseUSA minimum_claim_price bkt_minclaimprice ;RUN;
+
+
+********************************************************************************************
+**DUMMY VARIABLES **using a macro
+********************************************************************************************;
+DATA HorseRace6;SET HorseRace5;RUN;
+%macro category_to_binary(sm_dataset=,sm_var=,sm_prefix=);
+*Find unique instances of categorical variable;
+PROC SORT DATA=&sm_dataset(keep=&sm_var) OUT=&sm_dataset._unique;
+BY &sm_var;
+RUN;
+
+DATA _null_;
+SET &sm_dataset._unique end=end;
+IF _N_ eq 1 THEN DO;
+	CALL EXECUTE("data &sm_dataset;");
+	CALL EXECUTE("set &sm_dataset;");
+	END;
+	CALL EXECUTE (cat("length &sm_prefix",&sm_var," 3;"));
+	CALL EXECUTE (cats("&sm_prefix", &sm_var," = &sm_var = '", &sm_var,"';"));
+	IF END THEN CALL EXECUTE('run;');
+RUN;
+PROC SQL;
+	DROP TABLE &sm_dataset._unique;
+QUIT;
+%mend;
+%category_to_binary(sm_dataset=HorseRace6,sm_var=track_id,sm_prefix=dumtrkid_);
+%category_to_binary(sm_dataset=HorseRace6,sm_var=race_type,sm_prefix=dumracetype_);
+%category_to_binary(sm_dataset=HorseRace6,sm_var=age_restriction,sm_prefix=dumagerestrict_);
+%category_to_binary(sm_dataset=HorseRace6,sm_var=sex_restriction,sm_prefix=dumsexrestrict_);
+%category_to_binary(sm_dataset=HorseRace6,sm_var=surface,sm_prefix=dumsurface);
+%category_to_binary(sm_dataset=HorseRace6,sm_var=track_condition,sm_prefix=dumtrackcond_);
+%category_to_binary(sm_dataset=HorseRace6,sm_var=weather,sm_prefix=dumweather_);
+%category_to_binary(sm_dataset=HorseRace6,sm_var=wager_type,sm_prefix=dumwagertype_);
+***********************************************************************************************
+*Saved as permanent dataset
+**********************************************************************************************;
+LIBNAME Project "D:\Users\user445\My Assignments\Final Case Study";
+DATA HorseRace6;SET Project.HorseRace6;RUN;
+PROC CONTENTS DATA=HorseRace6;RUN;
+PROC UNIVARIATE DATA=HorseRace6;VAR Handle;RUN;
+
+****************VARS
+Handle 
+Holiday 
+Month 
+bkt_distance bkt_maxclaimprice bkt_minclaimprice bkt_payoff bkt_purseUSA 
+dumagerestrict_02 dumagerestrict_03 dumagerestrict_04 
+dumagerestrict_34 dumagerestrict_35 dumagerestrict_45 
+dumagerestrict_2U dumagerestrict_3U dumagerestrict_4U 
+dumracetype_ALW dumracetype_AOC dumracetype_CLM 
+dumracetype_DBY dumracetype_HCP dumracetype_MCL 
+dumracetype_MSW dumracetype_OCS dumracetype_SHP 
+dumracetype_SST dumracetype_STK dumracetype_STR 
+dumsexrestrict_B dumsexrestrict_F 
+dumsurfaceD 
+dumtrackcond_FM dumtrackcond_FT dumtrackcond_GD 
+dumtrackcond_MY dumtrackcond_SF dumtrackcond_SY dumtrackcond_WF 
+dumtrkid_CRC dumtrkid_FG 
+dumwagertype_D dumwagertype_E dumwagertype_M 
+dumwagertype_Q dumwagertype_T 
+dumweather_C dumweather_F dumweather_H 
+dumweather_L dumweather_O 
+fraction_1 fraction_2 fraction_3 fraction_4 fraction_5 
+number_of_runners number_of_tickets_bet 
+payoff_amount 
+********************;
+
+***********************************************************************************************
+										**LINEAR REGRESSION BY TRACK ID	
+**The Handle variable is skewed so we will log transform it.
+**WE will also create a training and validation dataset by splitting the dataset.
+**The splitting was done proportionally across Track_id using the Strata option.
+**The regression model was done using Stepwise option at the 95% significance level.
+**********************************************************************************************;
+DATA HorseRace7;SET HorseRace6;LogHandle=Log(Handle);RUN;
+PROC SURVEYSELECT DATA=HorseRace7 OUT=Split METHOD=srs SAMPRATE=0.5 OUTALL; RUN;
+DATA Training Validation; SET Split; IF selected=1 THEN OUTPUT Training; ELSE OUTPUT Validation; RUN;
+
+PROC FREQ DATA=Training;TABLES Track_ID;RUN;
+PROC FREQ DATA=Validation;TABLES Track_ID;RUN;
+
+PROC REG DATA=Training ALPHA=.05;BY Track_ID;
+MODEL LogHandle=
+Holiday 
+Month 
+bkt_distance bkt_maxclaimprice bkt_minclaimprice bkt_payoff bkt_purseUSA dumagerestrict_02 dumagerestrict_03 dumagerestrict_04 
+dumagerestrict_34 dumagerestrict_35 dumagerestrict_45 dumagerestrict_2U dumagerestrict_3U dumagerestrict_4U 
+dumracetype_ALW dumracetype_AOC dumracetype_CLM dumracetype_DBY dumracetype_HCP dumracetype_MCL 
+dumracetype_MSW dumracetype_OCS dumracetype_SHP dumracetype_SST dumracetype_STK dumracetype_STR dumsexrestrict_B dumsexrestrict_F 
+dumsurfaceD dumtrackcond_FM dumtrackcond_FT dumtrackcond_GD dumtrackcond_MY dumtrackcond_SF dumtrackcond_SY dumtrackcond_WF 
+dumtrkid_CRC dumtrkid_FG dumwagertype_D dumwagertype_E dumwagertype_M dumwagertype_Q dumwagertype_T dumweather_C dumweather_F dumweather_H 
+dumweather_L dumweather_O number_of_runners number_of_tickets_bet payoff_amount
+/VIF selection=Stepwise SLENTRY=.05 SLSTAY=.05;
+OUTPUT OUT=Regression P=Predicted R=Residuals;
+RUN;
+
+*Checking for Homoscedasticity;
+PROC GPLOT DATA=Regression;PLOT Predicted*Residuals;Title Predicted vs. Residuals (Model);RUN;
+
+*Validating the model;
+DATA Validation;SET Validation;
+IF Track_id="AP" THEN Predicted=
+11.42326	
++0.08906*	Month 
++0.02134*	bkt_distance 
++0.05847*	bkt_purseUSA 
+-0.12956*	dumagerestrict_02
++0.06351*	dumagerestrict_03
++0.34552*	dumracetype_SHP 
++0.36189*	dumracetype_STK 
+-0.21616*	dumsurfaceD 
++0.11795*	dumtrackcond_FT 
+-0.47429*	dumwagertype_E 
+-0.20154*	dumwagertype_T 
++0.12364*	number_of_runners
+-0.00003222*	payoff_amount ;
+IF Track_id='CRC' THEN Predicted=
+11.83287	
++0.07616*	Holiday 
++0.02732*	Month 
++0.02815*	bkt_purseUSA 
++0.08518*	dumagerestrict_03
++0.5296*	dumagerestrict_04
+-0.77754*	dumagerestrict_2U
++0.63363*	dumagerestrict_4U
++0.06462*	dumracetype_AOC 
++0.31613*	dumracetype_STK 
+-0.07368*	dumsexrestrict_B 
+-0.13294*	dumsurfaceD 
++0.05474*	dumtrackcond_FT 
+-1.16339*	dumwagertype_D 
+-0.74165*	dumwagertype_E 
+-0.32091*	dumwagertype_T 
++0.09807*	number_of_runners;
+IF Track_id='FG' THEN Predicted=
+11.77393
+-0.19159*	Holiday 
++0.07506*	bkt_purseUSA 
+-0.19745*	dumagerestrict_02
++0.08871*	dumagerestrict_03
+-1.21967*	dumracetype_DBY 
++0.33889*	dumracetype_STK 
+-0.08459*	dumsexrestrict_B 
++0.10949*	number_of_runners;
+Residuals=LogHandle-Predicted;
+RUN;
+
+PROC GPLOT DATA=Validation;PLOT Predicted*Residuals;TITLE Predicted vs Residuals (Validation); RUN;
+*Visualizing model fit;
+PROC GPLOT DATA=Validation;PLOT LogHandle*Handle Predicted*Handle/overlay; TITLE Model vs Actual;RUN; 
+
+*Data Exploration;
+PROC SORT DATA=HorseRace6;BY Year Month ;RUN; PROC MEANS DATA=HorseRace6;BY Year Month;RUN;
+PROC SORT DATA=HorseRace6;BY Track_ID Year Month ;RUN; PROC MEANS DATA=HorseRace6;BY Track_ID Year Month;RUN;
+PROC FREQ DATA=HorseRace6;TABLES Race_Type Wager_Type;RUN;
+
+
+
+
